@@ -1,3 +1,4 @@
+# Load packages
 library(tidyverse)
 library(lubridate)
 library(readxl)
@@ -9,37 +10,37 @@ library(tibble)
 # Start timer
 run_start <- Sys.time()
 
-setwd("//Mlcsu-bi-fs/bsolccg/Reports/02_Routine/BBCS Oversight Framework/R/Phase 3")
+# Set parameters
+ids <- c("All")
 
-# Parameters -------------------------------------------------------------------
-ids <- c("All") # or a vector of numeric/char ids or single comma-separated string like "10, 11, 12"
+# Source all function files
+source("R/excel_data_load.R")
+source("R/transformations.R")
+source("R/time_periods.R")
+source("R/calculations.R")
+source("R/database.R")
+source("R/data_quality.R")
+source("R/pipeline.R")
 
-# 1) Database connection -------------------------------------------------------
-conn <- dbConnect(
-  odbc(),
-  Driver   = "SQL Server",
-  Server   = "MLCSU-BI-SQL",
+# Create database connection
+conn <- DBI::dbConnect(
+  odbc::odbc(),
+  Driver = "SQL Server",
+  Server = "MLCSU-BI-SQL",
   Database = "Cluster_BBCS",
   Trusted_Connection = "True"
 )
 
-# 2) Read metadata -------------------------------------------------------------
-metadata <- dbGetQuery(conn, "SELECT * FROM [Cluster_BBCS].[BBCS].[Oversight_Framework_Reference_Metadata]")
 
-# Source function files
-source(file.path("utils.R"))
-source(file.path("etl.R"))
-
-# 3) Define a runner that sources functions and executes the ETL ---------------
-run_all <- function(conn, metadata, indicator_ids = "All", table_name) {
-
+run_all <- function(conn, indicator_ids = "All", table_name) {
+  
   # Convert Phase 1 SQL staging table into Phase 2 SQL table 
   message("Converting Phase 1 SQL Staging table into Phase 2 SQL table...")
   DBI::dbExecute(
     conn,
     "EXEC [Cluster_BBCS].[BBCS].[Oversight_Framework_Phase_2_Process]"
   )
-
+  
   # Update age metadata table
   message("Updating Age metadata reference table ...")
   DBI::dbExecute(
@@ -53,54 +54,68 @@ run_all <- function(conn, metadata, indicator_ids = "All", table_name) {
     conn,
     "EXEC [Cluster_BBCS].[BBCS].[Oversight_Framework_Phase_3_Final_Input_Process]"
   )
-
+  
+  # Retrieve refreshed reference data
+  metadata <- DBI::dbGetQuery(
+    conn,
+    "
+  SELECT *
+  FROM [Cluster_BBCS].[BBCS].[Oversight_Framework_Reference_Metadata]
+  "
+  )
+  
+  age_lookup <- get_age_lookup_from_sql(conn)
+  
   #  Normalize indicator_ids
   ids <- normalize_indicator_ids(indicator_ids)
-
+  
   # Pull fresh staging data
   if (is.null(ids) || length(ids) == 0) {
     message("Extracting ALL indicators from staging table ...")
   } else {
     message(sprintf("Extracting %d indicator(s) from staging table ...", length(ids)))
   }
-
+  
+  # Get indicators from the staging table
   staging_data <- get_indicators_from_sql(
     conn         = conn,
     table_name   = table_name,
     indicator_ids = ids
   ) 
-
+  
+  assign("staging_data", staging_data, envir = .GlobalEnv)
+  
   # Run ETL
   message("Processing indicator data ...")
   result <- calculate_values(
     data = staging_data,
     metadata = metadata,
+    age_lookup = age_lookup,
     metadata_key = "indicator_id"
   )
-
+  
   list(
     result = result,
-    staging_data = staging_data
+    staging_data = staging_data,
+    metadata = metadata,
+    indicator_ids = ids
   )
 }
-
 
 # 4) Execute and capture output -------------------------------------------------
 
 output <- run_all(conn = conn,
-                  metadata = metadata,
                   indicator_ids =  ids,
                   table_name = "[Cluster_BBCS].[BBCS].[Oversight_Framework_Fact_Final_Input_Data]")
-
 
 #5. Run all DQ checks ----------------------------------------------------------
 run_all_dq_checks(df = output$result$combined_calc_dfs,
                   reference_data = output$staging_data,
-                  metadata = metadata)
+                  metadata = output$metadata)
 
 # 5) Add insertion time stamp and standardise schema ---------------------------
 result <- output$result$combined_calc_dfs |>
-  filter(time_period_type %in% c("1 year", "Monthly")) |> 
+  filter(time_period_type %in% c("1 year", "Monthly", "Quarterly")) |> 
   mutate(insertion_date_time = Sys.time()) |>
   mutate(
     indicator_id     = as.integer(indicator_id),
@@ -157,10 +172,13 @@ DBI::dbExecute(
 message("Creating SPC charts...")
 DBI::dbExecute(
   conn,
-  "EXEC [Cluster_BBCS].[BBCS].[Oversight_Framework_Phase_2_Process]"
+  "EXEC [Cluster_BBCS].[BBCS].[Oversight_Framework_SPC_SCV]"
 )
 
 # End timer
 run_end <- Sys.time()
 total_mins <- as.numeric(difftime(run_end, run_start, units = "mins"))
 message(sprintf(" Total run time: %.2f min", total_mins))
+
+# Close database connection
+DBI::dbDisconnect(conn)
