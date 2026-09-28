@@ -135,6 +135,6 @@ if(file.exists(output_file)){
 # Write updated file
 
 writexl::write_xlsx(
-  df,
+  list("Data Input" = df),
   path = output_file
 )
