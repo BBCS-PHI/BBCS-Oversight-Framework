@@ -2,6 +2,9 @@
 .Rproj.user
 .Rhistory
 .Rdata
+.RDataTmp
+.RDataTmp*
+.Rhistory
 .httr-oauth
 .DS_Store
 .quarto
