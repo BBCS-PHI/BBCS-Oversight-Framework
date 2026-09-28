@@ -1,7 +1,7 @@
-remotes::install_github(
-  "BBCS-PHI/metricengineR",
-  upgrade = "never"
-)
+# remotes::install_github(
+#   "BBCS-PHI/metricengineR",
+#   upgrade = "never"
+# )
 # packageVersion("metricengineR")
 
 calculate_values <- function(
@@ -142,15 +142,8 @@ calculate_values <- function(
   
   # Rows requiring calculations
   
-  df_calc <- df[eligible_for_processing, , drop = FALSE] |>
-    dplyr::mutate(
-      numerator = dplyr::if_else(
-        is.na(.data$numerator),
-        0,
-        .data$numerator
-        )
-      )
-  
+  df_calc <- df[eligible_for_processing, , drop = FALSE]
+
   # Pre-calculated rows kept as supplied
   
   df_keep <- df[keep_as_is, , drop = FALSE] |>
@@ -225,14 +218,18 @@ calculate_values <- function(
   cli::cli_h2("Percentage")
   
   percentage <- df_calc |> 
-    metricengineR::calculate_percentage() |> 
+    metricengineR::calculate_percentage(
+      confidence_intervals_required = FALSE
+      ) |> 
     metricengineR::tidy_output()
   
   # -------- Crude rate  -------------------------------------------------------
   cli::cli_h2("Crude Rate")
   
   crude_rate <- df_calc |> 
-    metricengineR::calculate_crude_rate() |> 
+    metricengineR::calculate_crude_rate(
+      confidence_intervals_required = FALSE
+    ) |> 
     metricengineR::tidy_output()
   
   # -------- Ratio  ------------------------------------------------------------
@@ -251,7 +248,8 @@ calculate_values <- function(
         dplyr::select(
           "indicator_id",
           "single_age_code"
-        )
+        ),
+      confidence_intervals_required = FALSE
       ) |> 
     metricengineR::tidy_output()
   
@@ -263,7 +261,7 @@ calculate_values <- function(
     metricengineR::tidy_output()
   
   # -------- Percentage change -------------------------------------------------
-  cli::cli_h2("Percentage")
+  cli::cli_h2("Percentage Change")
  
   percentage_change <- df_calc |> 
     metricengineR::calculate_percentage_change() |> 
