@@ -1,237 +1,524 @@
-# Function to calculate different value types ----------------------------------
+# remotes::install_github(
+#   "BBCS-PHI/metricengineR",
+#   upgrade = "never"
+# )
+# packageVersion("metricengineR")
 
-# Purpose:
-#   Calculates and standardises indicator values (Percentage, Crude/Ratio, DASR)
-#   and returns a unified schema ready for row-binding across methods.
-#
-# Inputs:
-#   data         - dataframe with (at minimum) the following columns:
-#                  indicator_id, start_date, end_date, numerator, denominator,
-#                  indicator_value (may be NA), value_type_code, imd_code,
-#                  aggregation_id, sex_code, ethnicity_code, creation_date,
-#                  source_code
-#   metadata     - OPTIONAL dataframe used to enrich `data`; must contain:
-#                  <metadata_key>, age, period_type, value_multiplier, status_code
-#   metadata_key - character scalar giving the join key name in `metadata`
-#                  (default: "indicator_id")
-#
-# Output:
-#   A dataframe in the standardised schema `TIDY_COLS`, containing:
-#     - Rows not requiring calculation (kept as-is, standardised)
-#     - Rows that required calculation but were ineligible (standardised)
-#     - Newly calculated results for:
-#         * Percentage (via calc_percentage)
-#         * Crude rate / Ratio (via calc_crude_or_ratio)
-#         * DASR (via calc_dasr)
-#   All outputs have consistent columns (e.g., indicator_value, lower_ci95,
-#   upper_ci95) and cleaned datatypes.
-#
-# Eligibility rules for calculation:
-#   - indicator_value is NA
-#   - denominator is present and > 0
-#   - value_multiplier is present (non-NA)
-#   - status_code == 1
-#   - value_type_code is present (non-NA)
-
-calculate_values <- function(data, metadata, age_lookup, metadata_key = "indicator_id"){
+calculate_values <- function(
+    data, 
+    metadata, 
+    age_metadata
+    ){
   
-  # -------- Validate inputs / bring in value_multiplier ---------------------------
-  message("\u25B6 Cleaning data types and validating inputs...")
-  df <- data |>
-    mutate(time_period_type = get_duration_label(as.Date(start_date), as.Date(end_date))) |>
-    create_combination_id() |>
-    clean_data_types()
+  cli::cli_h1("Metric calculation pipeline")
   
-  # metadata is REQUIRED
-  if (is.null(metadata)) {
-    stop("`metadata` is required and must not be NULL")
+  # -------- Validate inputs / bring in value_multiplier -----------------------
+  cli::cli_alert_info(
+    "Preparing data and validating inputs."
+  )
+  
+  if(!is.data.frame(data)){
+    stop(
+      "`data` must be a data frame.",
+      call. = FALSE
+    )
   }
   
-  # Basic checks
-  if (!metadata_key %in% names(metadata)) {
-    stop(sprintf("\u274C metadata must contain the key column '%s'", metadata_key))
-  }
-  if (!"value_multiplier" %in% names(metadata)) {
-    stop("\u274C metadata must contain a 'value_multiplier' column")
-  }
-  if (!"status_code" %in% names(metadata)) {
-    stop("\u274C metadata must contain a 'status_code' column")
+  if(!is.data.frame(metadata)){
+    stop(
+      "`metadata` must be a data frame.",
+      call. = FALSE
+    )
   }
   
-  # Select required columns from metadata
-  metadata_cols = c(metadata_key, "age", "period_type", "value_multiplier", "status_code", "population_type", "precalculated")
-  metadata2 <- metadata |> select(all_of(metadata_cols))
-  
-  # Bring metadata onto staging
-  message("\u25B6 Bringing metadata onto staging table...")
-  df <- df |>
-    left_join(metadata2, by = setNames(metadata_key, metadata_key))
-  
-  # Exclude incomplete data
-  # Comment this out as we don't want to exclude incomplete data
-  # message("\u25B6 Excluding incomplete data..")
-  # df <- exclude_incomplete_data(df = df, period_type_col = "period_type",
-  #                                   start_date_col = "start_date", end_date_col = "end_date",
-  #                                   time_period_col = "time_period_type",
-  #                                   current_date = Sys.Date(), enforce_duration = TRUE, tolerance_days = 5L)
+  if(!is.data.frame(age_metadata)){
+    stop(
+      "`age_metadata` must be a data frame.",
+      call. = FALSE
+    )
+  }
   
   
-  # Create 3 and 5 year pooled data
-  message("\u25B6 Creating 3 and 5 year pooled data...")
-  # pooled_df <- create_pooled_with_ranges(df, ks = c(3,5), POOL_KEYS = POOL_KEYS) |>
-  #   left_join(metadata2, by = setNames(metadata_key, metadata_key))
-  pooled_df <- create_pooled_with_ranges(df, ks = c(3,5), POOL_KEYS = POOL_KEYS)
+  # Validate required metadata columns
   
-  # Combine pooled data with yearly data
-  message("\u25B6 Combining yearly and pooled data...")
-  all_df <- bind_rows(pooled_df, df) |>
-    select(
-      -ends_with(".x"),
-      -ends_with(".y")
+  metadata_cols <- c(
+    "indicator_id",
+    "age",
+    "period_type",
+    "value_multiplier",
+    "status_code",
+    "population_type",
+    "precalculated"
+  )
+  
+  missing_metadata_cols <- setdiff(
+    metadata_cols,
+    names(metadata)
+  )
+  
+  if(length(missing_metadata_cols) > 0L){
+    stop(
+      paste0(
+        "Missing required metadata columns: ",
+        paste(missing_metadata_cols, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+  
+  # Check metadata contains one row per indicator
+  
+  duplicate_metadata <- metadata |>
+    dplyr::count(
+      .data[["indicator_id"]],
+      name = "row_count"
+    ) |>
+    dplyr::filter(
+      .data$row_count > 1L
     )
   
+  if(nrow(duplicate_metadata) > 0L){
+    stop(
+      "`metadata` must contain one row per indicator.",
+      call. = FALSE
+    )
+  }
   
-  # --- Partition rows -------------------------------------------------------
+  # Prepare data
   
-  message("\u25B6 Determining rows requiring calculations...")
-  # needs_calc <- is.na(all_df$indicator_value) & (!is.na(all_df$denominator) & all_df$denominator != 0) # this will bypass count data as denominator will always be zero/null
-  needs_calc <- !is.na(all_df$precalculated) &
-    all_df$precalculated == "No"
+  df <- data |>
+    dplyr::mutate(
+      time_period_type = 
+        metricengineR::derive_time_period_type(
+          as.Date(.data$start_date), 
+          as.Date(.data$end_date)
+          )
+      ) |>
+    metricengineR::create_inequality_combination_id() |> 
+    metricengineR::clean_data_types()
+ 
+
+  # Select required metadata
+  
+  metadata2 <- metadata |> 
+    dplyr::select(
+      dplyr::all_of(
+        metadata_cols
+      )
+    )
+ 
+  # Join metadata with the staging data
+  
+  cli::cli_alert_info(
+    "Joining metadata to staging data."
+  )
+  
+  df <- df |>
+    dplyr::left_join(
+      metadata2, 
+      by = "indicator_id"
+      )
+  
+  # --- Determine processing groups --------------------------------------------
+  
+  cli::cli_alert_info(
+    "Determining rows requiring calculations."
+  )
+ 
+  needs_calc <- !is.na(df$precalculated) &
+   df$precalculated == "No"
+  
+  keep_as_is <- !is.na(df$precalculated) &
+    df$precalculated == "Yes"
   
   # Only process where status_code == 1 or 2 AND value_multiplier is present
   eligible_for_processing <- needs_calc &
-    !is.na(all_df$value_multiplier) &
-    all_df$status_code %in% c(1,2) &
-    !is.na(all_df$value_type_code)
+    !is.na(df$value_multiplier) &
+    df$status_code %in% c(1L, 2L) &
+    !is.na(df$value_type_code)
   
-  # To be calculated
-  df_calc <- all_df[eligible_for_processing, ] |>
-    mutate(numerator = if_else(is.na(numerator), 0, numerator))
+  skipped <- !keep_as_is &
+    !eligible_for_processing
   
-  # Rows that we keep as-is (no calc needed)
-  df_keep <- all_df[!needs_calc, ] |>
-    # mutate(denominator = if_else(is.na(denominator), 0, denominator)) |>
-    left_join(get_age_lookup(metadata = metadata2, age_lookup = age_lookup), by = "indicator_id") |>
-    mutate(age_group_code = age_code) |>
-    select(all_of(TIDY_COLS))
+  # Rows requiring calculations
   
+  df_calc <- df[eligible_for_processing, , drop = FALSE]
+
+  # Pre-calculated rows kept as supplied
   
-  # Print unique indicator ids for which rows are kept as-is 
-  print(paste0("Unique indicator ids for which rows are kept as-is (no calc required): ",
-               unique(df_keep$indicator_id)))
+  df_keep <- df[keep_as_is, , drop = FALSE] |>
+    dplyr::left_join(
+      age_metadata |> 
+        dplyr::select(
+          "indicator_id",
+          "single_age_code"
+        ), 
+      by = "indicator_id"
+      ) |>
+    dplyr::mutate(
+      age_group_code = single_age_code
+      ) |> # need to join back to age lookup to get the right age code especially for DASR indicators where the column has age splits instead of a single age group code
+    metricengineR::tidy_output()
   
-  # Rows that needed calc but were NOT eligible (will be appended to the output later)
-  df_skip <- all_df[needs_calc & !eligible_for_processing, ] |>
-    # mutate(denominator = if_else(is.na(denominator), 0, denominator)) |>
-    left_join(get_age_lookup(metadata = metadata2, age_lookup = age_lookup), by = "indicator_id") |>
-    mutate(age_group_code = age_code) |>
-    select(all_of(TIDY_COLS))
+  if(nrow(df_keep) > 0L){
+    
+    kept_ids <- paste(
+      unique(df_keep$indicator_id),
+      collapse = ", "
+    )
+    
+    cli::cli_alert_info(
+      "Indicators kept as-is: {kept_ids}"
+    )
+    
+  } else {
+    
+    cli::cli_alert_info(
+      "No indicators were kept as-is."
+    )
+  }
   
+  # Rows requiring calculation but not eligible
   
-  # -------- Percentage ------------------------------------------------------
-  message("\u25B6 Calculating percentage...")
-  temp1 <- df_calc |> calc_percentage() |>
-    tidy_output()
+  df_skip <- df[skipped, , drop = FALSE] |>
+    dplyr::left_join(
+      age_metadata |> 
+        dplyr::select(
+          "indicator_id",
+          "single_age_code"
+        ), 
+      by = "indicator_id"
+      ) |>
+    dplyr::mutate(
+      age_group_code = single_age_code
+      ) |>
+    metricengineR::tidy_output()
   
-  # -------- Crude rate & Ratio ----------------------------------------------
-  message("\u25B6 Calculating crude rate and ratio...")
-  temp2 <- df_calc |> calc_crude_or_ratio() |>
-    tidy_output()
+  if(nrow(df_skip) == 0L){
+    
+    cli::cli_alert_success(
+      "No indicators were skipped."
+    )
+    
+  } else {
+    
+    skipped_ids <- paste(
+      unique(df_skip$indicator_id),
+      collapse = ", "
+    )
+    
+    cli::cli_alert_warning(
+      "Indicators skipped from calculation: {skipped_ids}"
+    )
+  }
+  
+  cli::cli_h2("Performing Calculations")
+  
+  # -------- Percentage --------------------------------------------------------
+  cli::cli_h2("Percentage")
+  
+  percentage <- df_calc |> 
+    metricengineR::calculate_percentage(
+      confidence_intervals_required = FALSE
+      ) |> 
+    metricengineR::tidy_output()
+  
+  # -------- Crude rate  -------------------------------------------------------
+  cli::cli_h2("Crude Rate")
+  
+  crude_rate <- df_calc |> 
+    metricengineR::calculate_crude_rate(
+      confidence_intervals_required = FALSE
+    ) |> 
+    metricengineR::tidy_output()
+  
+  # -------- Ratio  ------------------------------------------------------------
+  cli::cli_h2("Ratio")
+  
+  ratio <- df_calc |> 
+    metricengineR::calculate_ratio() |> 
+    metricengineR::tidy_output()
   
   # -------- Directly age standardised rate (DASR) ---------------------------
-  message("\u25B6 Calculating DASR...")
-  temp3 <- df_calc |> calc_dasr(metadata = metadata2, age_lookup = age_lookup) |>
-    tidy_output()
+  cli::cli_h2("DASR")
+  
+  dasr <- df_calc |>
+    metricengineR::calculate_dasr(
+      age_metadata = age_metadata |> 
+        dplyr::select(
+          "indicator_id",
+          "single_age_code"
+        ),
+      confidence_intervals_required = FALSE
+      ) |> 
+    metricengineR::tidy_output()
   
   # -------- Count -----------------------------------------------------------
-  message("\u25B6 Calculating count...")
-  temp4 <- df_calc |> calc_count() |>
-    tidy_output()
+  cli::cli_h2("Count")
+  
+  count <- df_calc |> 
+    metricengineR::calculate_count() |> 
+    metricengineR::tidy_output()
   
   # -------- Percentage change -------------------------------------------------
-  message("\u25B6 Calculating count...")
-  temp5 <- df_calc |> calc_percentage_change() |>
-    tidy_output()
+  cli::cli_h2("Percentage Change")
+ 
+  percentage_change <- df_calc |> 
+    metricengineR::calculate_percentage_change() |> 
+    metricengineR::tidy_output()
   
   # -------- Difference --------------------------------------------------------
-  message("\u25B6 Calculating difference...")
-  temp6 <- df_calc |> calc_difference() |>
-    tidy_output()
+  cli::cli_h2("Difference")
+  
+  difference <- df_calc |> 
+    metricengineR::calculate_difference() |> 
+    metricengineR::tidy_output()
   
   # -------- SII ---------------------------------------------------------------
-  message("\u25B6 Calculating SII...")
-  temp7 <- df_calc |> calculate_sii() |>
-    tidy_output()
-
+  cli::cli_h2("Slope of Inequality Index (SII)")
+  
+  sii <- df_calc |> 
+    metricengineR::calculate_sii() |> 
+    metricengineR::tidy_output()
   
   # -------- Combine all outputs ---------------------------------------------
-  message("\u25B6 Combining all outputs...")
-  output <- bind_rows(
-    df_keep,          # Rows not calculated
-    df_skip,          # Rows that needed calc but were ineligible (status/value_multiplier)
-    temp1,            # Percentage
-    temp2,            # Crude rate & Ratio
-    temp3,            # DASR
-    temp4,            # Count
-    temp5,            # Percentage change
-    temp6,            # Difference
-    temp7             # SII
-  ) |> clean_data_types()
+  
+  cli::cli_alert_info(
+    "Combining calculated outputs."
+  )
+  
+  output <- dplyr::bind_rows(
+    df_keep,          
+    df_skip,          
+    percentage,            
+    crude_rate,             
+    ratio,            
+    dasr,            
+    count,           
+    percentage_change,            
+    difference,            
+    sii             
+  ) |> 
+    metricengineR::clean_data_types()
   
   # -------- Reporting of output ---------------------------------------------
-  message("\u25B6 Reporting output total rows...")
-  print(paste("Total rows for df_keep:", nrow(df_keep)))
-  print(paste("Total rows for df_skip:", nrow(df_skip)))
-  print(paste("Total rows for temp1 (perc):", nrow(temp1)))
-  print(paste("Total rows for temp2 (crude & ratio):", nrow(temp2)))
-  print(paste("Total rows for temp3 (DASR):", nrow(temp3)))
-  print(paste("Total rows for temp4 (Count):", nrow(temp4)))
-  print(paste("Total rows for temp5 (Percentage change):", nrow(temp5)))
-  print(paste("Total rows for temp6 (Difference):", nrow(temp6)))
-  print(paste("Total rows for temp7 (SII):", nrow(temp7)))
+  
+  cli::cli_h2("Output summary")
+  
+  cli::cli_dl(
+    c(
+      "Rows kept as-is" = nrow(df_keep),
+      "Rows excluded for investigation" = nrow(df_skip),
+      "Percentage" = nrow(percentage),
+      "Crude rate" = nrow(crude_rate),
+      "Ratio" = nrow(ratio),
+      "DASR" = nrow(dasr),
+      "Count" = nrow(count),
+      "Percentage change" = nrow(percentage_change),
+      "Difference" = nrow(difference),
+      "SII" = nrow(sii),
+      "Total valid output" = nrow(output)
+    )
+  )
   
   # -------- Reporting of skipped items --------------------------------------
-  message("\u25B6 Reporting skipped items...")
-  if (any(needs_calc & !eligible_for_processing)) {
-    reasons_df <- all_df[needs_calc & !eligible_for_processing, ] |>
-      transmute(
-        indicator_id = indicator_id,
-        status_code = status_code,
-        reason_missing_value_multiplier = is.na(value_multiplier),
-        reason_status_not_1 = is.na(status_code) | status_code != 1,
-        reason_missing_value_type = is.na(value_type_code)
+  
+  if(any(skipped)){
+    
+    cli::cli_h2("Skipped indicators")
+    
+    reasons_df <- df[
+      skipped,
+      ,
+      drop = FALSE
+    ] |>
+      dplyr::transmute(
+        indicator_id = .data$indicator_id,
+        status_code = .data$status_code,
+        
+        reason_missing_precalculated =
+          is.na(.data$precalculated),
+        
+        reason_invalid_precalculated =
+          !is.na(.data$precalculated) &
+          !.data$precalculated %in% c("Yes", "No"),
+        
+        reason_missing_value_multiplier =
+          is.na(.data$value_multiplier),
+        
+        reason_invalid_status =
+          is.na(.data$status_code) |
+          !.data$status_code %in% c(1L, 2L),
+        
+        reason_missing_value_type =
+          is.na(.data$value_type_code)
       ) |>
-      group_by(indicator_id, status_code) |>
-      summarise(
-        reasons = paste0(
+      dplyr::group_by(
+        .data$indicator_id,
+        .data$status_code
+      ) |>
+      dplyr::summarise(
+        reasons = paste(
           c(
-            if (any(reason_missing_value_multiplier)) "missing value_multiplier" else NULL,
-            if (any(reason_status_not_1)) paste0("status_code = ", unique(status_code)) else NULL,
-            if (any(reason_missing_value_type)) "missing value_type_code" else NULL
+            if(any(.data$reason_missing_precalculated))
+              "missing precalculated" else NULL,
+            
+            
+            if(any(.data$reason_invalid_precalculated))
+              "invalid precalculated value" else NULL,
+            
+            if(any(.data$reason_missing_value_multiplier))
+              "missing value_multiplier" else NULL,
+            
+            if(any(.data$reason_invalid_status))
+              "invalid or missing status_code" else NULL,
+            
+            if(any(.data$reason_missing_value_type))
+              "missing value_type_code" else NULL
           ),
           collapse = "; "
         ),
         .groups = "drop"
       )
     
-    message("\u26A0\uFE0F  Some indicators were not processed:")
-    apply(
-      reasons_df,
-      1,
-      function(r) message("  ID ", r[["indicator_id"]], ": ", r[["reasons"]])
+    cli::cli_alert_warning(
+      "{nrow(reasons_df)} indicator(s) were not processed."
     )
+    
+    for(i in seq_len(nrow(reasons_df))){
+      
+      cli::cli_bullets(
+        c(
+          "*" = paste0(
+            "Indicator ",
+            reasons_df$indicator_id[i],
+            ": ",
+            reasons_df$reasons[i]
+          )
+        )
+      )
+    }
   }
   
-  message("\u2705 Process completed!")
-  # Return a list of all dfs for tracking
-  return(list(combined_calc_dfs = output,
-              df_keep = df_keep,
-              df_skip = df_skip,
-              perc = temp1,
-              crude_ratio = temp2,
-              dasr = temp3,
-              count = temp4,
-              perc_change = temp5,
-              difference = temp6,
-              sii = temp7))
+  
+  # Complete
+  
+  cli::cli_alert_success(
+    "Metric calculation pipeline completed successfully."
+  )
+  
+  
+  # Return outputs
+  
+  list(
+    combined_calc_dfs = output,
+    df_keep = df_keep,
+    df_skip = df_skip,
+    percentage = percentage,
+    crude_rate = crude_rate,
+    ratio = ratio,
+    dasr = dasr,
+    count = count,
+    percentage_change = percentage_change,
+    difference = difference,
+    sii = sii
+  )
 }
+
+run_all_dq_checks <- function(df, reference_data, metadata, cols_to_check = NULL, show_n = 10) {
+  
+  cli::cli_h1("Running Data Quality Checks")
+  
+  # Row counts ------------------------------------------------------
+  
+  message("1) Row counts\n")
+  
+  metricengineR::check_row_counts(
+    df = df, 
+    reference_data = reference_data
+    )
+
+  cat("\n")
+  
+  # Missing required columns ----------------------------------------
+  
+  message("2) Rows with missing required columns\n")
+  
+  metricengineR::check_missing_values(
+    df = df,
+    cols =  c("indicator_id", "start_date", "end_date", "time_period_type",
+                    "combination_id", "source_code")
+  )
+
+  cat("\n")
+  
+  # Unique age group code for DASR indicators -----------------------
+  
+  message("3) Unique age_group_code for DASR indicators\n")
+  
+  metricengineR::check_dasr_age_group_code(
+    df
+  )
+
+  cat("\n")
+  
+  # Active indicator values are populated ---------------------------
+  
+  message("4) Active indicator values are populated\n")
+  
+  metricengineR::check_active_indicator_values(
+    df = df,
+    metadata = metadata
+  )
+  
+  cat("\n")
+  
+  # Duplicates ------------------------------------------------------
+  
+  message("5) Identify duplicates\n")
+  
+  metricengineR::check_duplicates(
+    df = df,
+    key_cols = c("indicator_id", "start_date", "end_date", "aggregation_id",
+                 "age_group_code", "sex_code", "ethnicity_code", "imd_code", "value_type_code",
+                 "source_code")
+  )
+  
+  cat("\n")
+  
+  # Unique source code ----------------------------------------------
+  
+  message("6) Check number of unique source codes \n")
+  
+  metricengineR::check_source_code(
+    df = df,
+    indicator_col = "indicator_id",
+    source_code_col = "source_code"
+  )
+
+  cat("\n")
+  
+  # Invalid percentages ---------------------------------------------
+  
+  message("7) Check invalid percentage values \n")
+  
+  metricengineR::check_invalid_percentages(
+    df = df
+  )
+  
+  cat("\n")
+  
+  # Missing confidence intervals -------------------------------------
+  
+  message("8) Check missing confidence intervals \n")
+  
+  metricengineR::check_missing_confidence_intervals(
+    df = df
+  )
+
+  cat("\n")
+  
+  cli::cli_alert_info("DQ checks completed.")
+
+}
+
