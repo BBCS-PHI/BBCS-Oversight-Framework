@@ -6,7 +6,7 @@ library(tibble)
 ################################################################################
 # Purpose(s):
 # To download Fingertips data 
-# To transform the data according to the Oversight Framework table schema
+# To transform data according to the Oversight Framework table schema
 # To load data into [Cluster_BBCS].[BBCS].[Oversight_Framework_Fact_API_Data]"
 ################################################################################
 
