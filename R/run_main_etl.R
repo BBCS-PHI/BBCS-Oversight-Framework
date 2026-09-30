@@ -29,6 +29,7 @@ conn <- DBI::dbConnect(
 run_all <- function(conn, indicator_ids = "All", schema_name, table_name) {
   
   #-------------------- Phase 1 ------------------------------------------------
+  # Load data into Phase 1 SQL staging table 
   
   
   #-------------------- Phase 2 ------------------------------------------------
