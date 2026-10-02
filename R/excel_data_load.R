@@ -71,6 +71,7 @@ all_data <- excel_files |>
 
 cli::cli_alert_success("Process completed.")
 
+
 #4. Populate remaining columns -------------------------------------------------
 
 geography_lookup <- DBI::dbGetQuery(
@@ -143,6 +144,8 @@ df <- all_data |>
     source_code = source_code_lookup
   )
 
+
+
 #5. DQ checks ------------------------------------------------------------------
 
 # Check for any missing value across the following columns
@@ -200,7 +203,7 @@ DBI::dbWriteTable(
     schema = "BBCS",
     table = "Oversight_Framework_Fact_SQL_Staging_Data_Excel"
   ),
-  value = all_data,
+  value = df,
   append = TRUE
 )
 
