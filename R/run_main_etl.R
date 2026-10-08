@@ -12,7 +12,7 @@ run_start <- Sys.time()
 ids <- c("All")
 
 # Source function file
-source("R/excel_data_load.R") # Load Excel metrics data into SQL
+source("R/Phase 1/load_excel_data.R") # Load manual Excel metrics data into SQL
 source("R/pipeline.R")        # Run calculations pipeline
 
 #2. Create database connection -------------------------------------------------
@@ -31,6 +31,16 @@ run_all <- function(conn, indicator_ids = "All", schema_name, table_name) {
   #-------------------- Phase 1 ------------------------------------------------
   # Load data into Phase 1 SQL staging table 
   
+  cli::cli_h1("Phase 1")
+  
+  cli::cli_alert_info("Running data extraction")
+  
+  DBI::dbExecute(
+    conn,
+    "EXEC [Cluster_BBCS].[BBCS].[Oversight_Framework_Staging_Data_Insert_All]"
+  )
+  
+  cli::cli_alert_success("Process completed.")
   
   #-------------------- Phase 2 ------------------------------------------------
   # Convert Phase 1 SQL staging table into Phase 2 SQL table 
@@ -164,8 +174,11 @@ run_all_dq_checks(df = output$result$combined_calc_dfs,
                   reference_data = output$staging_data,
                   metadata = output$metadata)
 
+
 #6. Standardize output ---------------------------------------------------------
 result <- output$result$combined_calc_dfs |>
+  dplyr::mutate(time_period_type = if_else(start_date == '2024-02-01' &
+                                             end_date == '2024-02-28', "Monthly", time_period_type)) |> 
   dplyr::filter(time_period_type %in% c("1 year", "Monthly", "Quarterly")) |> 
   dplyr::mutate(insertion_date_time = Sys.time()) |>
   dplyr::mutate(
