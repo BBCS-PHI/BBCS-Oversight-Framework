@@ -28,13 +28,9 @@ csds_result <- metricengineR::get_publication_data(
     "[a-z]+-[0-9]{4}/?$"
   ),
   resource_text = "CSV Data \\(as ZIP\\)",
-  download_folder = "data/CSDS_downloads",
-  dataset_suffix = "/datasets",
-  period_pattern = "[a-z]+-[0-9]{4}/?$",
-  match_period = TRUE,
-  file_pattern = "\\.zip($|\\?)",
-  all_columns_character = TRUE
+  download_folder = "data/CSDS_downloads"
 )
+
 
 #2. Filter and transform dataset -----------------------------------------------
 
@@ -62,6 +58,7 @@ monthly_numerators <- csds_result$data |>
     ethnicity_code = 999L
   )
 
+
 ##2.2. Build denominator dataset -----------------------------------------------
 
 previous_year_data <- monthly_numerators |>
@@ -78,6 +75,7 @@ previous_year_data <- monthly_numerators |>
     
     denominator = numerator
   )
+
 
 ##2.3 Build final dataset ------------------------------------------------------
 
