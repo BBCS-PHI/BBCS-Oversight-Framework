@@ -40,6 +40,7 @@ Through `metricengineR`, the project can process a range of metric types, includ
 * percentages
 * proportions
 * directly age-standardised rates
+* slope index of inequality (SII)
 * crude rates
 * ratios
 * percentage changes
