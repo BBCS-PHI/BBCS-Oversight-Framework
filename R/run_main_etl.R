@@ -177,8 +177,6 @@ run_all_dq_checks(df = output$result$combined_calc_dfs,
 
 #6. Standardize output ---------------------------------------------------------
 result <- output$result$combined_calc_dfs |>
-  dplyr::mutate(time_period_type = if_else(start_date == '2024-02-01' &
-                                             end_date == '2024-02-28', "Monthly", time_period_type)) |> 
   dplyr::filter(time_period_type %in% c("1 year", "Monthly", "Quarterly")) |> 
   dplyr::mutate(insertion_date_time = Sys.time()) |>
   dplyr::mutate(
@@ -219,15 +217,16 @@ for (col in float_cols) {
 
 cli::cli_h1("Final Data Output SQL Insertion")
 
-insert_data_into_sql_table(
+metricengineR::replace_indicator_data_in_sql(
   conn,
-  database = "Cluster_BBCS",
-  schema   = "BBCS",
-  table    = "Oversight_Framework_Fact_Final_Output_Data",
+  database_name = "Cluster_BBCS",
+  schema_name   = "BBCS",
+  table_name    = "Oversight_Framework_Fact_Final_Output_Data",
   data     = result,
   indicator_ids = ids,
   id_column = "indicator_id"
 )
+
 
 # 8) Output table updates ------------------------------------------------------
 
