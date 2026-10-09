@@ -4,6 +4,8 @@ library(DBI)
 library(odbc)
 library(janitor)
 
+cli::cli_h1("Loading metadata")
+
 file_path <- "//Mlcsu-bi-fs/bsolccg/Reports/02_Routine/BBCS Oversight Framework/Metadata/"
 
 file_name <- "NOF_26_27_Metrics_Metadata.xlsx"
@@ -106,3 +108,5 @@ dbExecute(connection_bsol,
 )
 
 DBI::dbDisconnect(connection_bsol)
+
+cli::cli_alert_success("Metadata loaded.")
