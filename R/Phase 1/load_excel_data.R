@@ -40,6 +40,7 @@ sql_connection <- dbConnect(
 
 cli::cli_h1("Reading Excel files")
 
+
 all_data <- excel_files |>
   purrr::map(
     ~ metricengineR::read_excel_file(
@@ -48,7 +49,7 @@ all_data <- excel_files |>
     ) |>
       dplyr::mutate(
         reference_id = as.character(reference_id),
-        indicator_id = as.integer(indicator_id),
+        indicator_id = NA_integer_, # will be populated later
         start_date = as.Date(start_date),
         end_date = as.Date(end_date),
         numerator = as.numeric(numerator),
@@ -58,13 +59,13 @@ all_data <- excel_files |>
         upper_ci95 = as.numeric(upper_ci95),
         imd_code = as.integer(imd_code),
         geography_code = as.character(geography_code),
-        aggregation_id = as.integer(aggregation_id),
+        aggregation_id = NA_integer_, # will be populated later
         age_group_code = as.integer(age_group_code),
         sex_code = as.integer(sex_code),
         ethnicity_code = as.integer(ethnicity_code),
-        creation_date = as.Date(creation_date),
-        value_type_code = as.integer(value_type_code),
-        source_code = as.integer(source_code)
+        creation_date = as.Date(NA_character_), # will be populated later
+        value_type_code = NA_integer_, # will be populated later
+        source_code = NA_integer_ # will be populated later
       )
   ) |>
   dplyr::bind_rows()
@@ -110,7 +111,7 @@ df <- all_data |>
     reference_id = as.character(reference_id),
     geography_code = case_when(
       
-      geography_code %in% c("E38000258", "D2P2L") ~ geography_code,
+      geography_code %in% c("E38000258", "D2P2L", "BBCS01") ~ geography_code,
       TRUE ~ substr(geography_code, 1, 3) # Get the first 3 characters for provider codes
     )
   ) |>
@@ -148,8 +149,11 @@ df <- all_data |>
 
 #5. DQ checks ------------------------------------------------------------------
 
+cli::cli_h1("Running DQ checks")
+
+
 # Check for any missing value across the following columns
-df |>
+dq_missing_summary <- df |>
   dplyr::summarise(
     dplyr::across(
       c(
@@ -169,9 +173,12 @@ df |>
     )
   )
 
+print(
+  dq_missing_summary
+)
 
-# See the actual rows 
-df |>
+# Identify rows containing missing required values
+dq_missing_rows <- df |>
   dplyr::filter(
     dplyr::if_any(
       c(
@@ -191,9 +198,26 @@ df |>
     )
   )
 
+if(nrow(dq_missing_rows) == 0L){
+  
+  cli::cli_alert_success(
+    "No missing values found in required columns"
+  )
+} else{
+  
+  cli::cli_alert_warning(
+    "Found {nrow(dq_missing_rows)} row(s) with missing values in required columns."
+  )
+  
+  print(
+    dq_missing_rows
+  )
+}
+
+
 #6. Loading data into SQL ------------------------------------------------------
 
-# Append data to Oversight_Framework_Fact_SQL_Staging_Data_Excel
+# Append data to Oversight_Framework_Fact_SQL_Staging_Data_Excel first
 
 cli::cli_h1("Loading Excel data into SQL")
 
