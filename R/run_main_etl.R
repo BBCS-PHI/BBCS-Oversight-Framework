@@ -4,6 +4,11 @@ library(odbc)
 library(metricengineR)
 library(tidyverse)
 library(cli)
+library(janitor)
+library(readxl)
+library(purrr)
+library(lubridate)
+library(writexl)
 
 # Start timer
 run_start <- Sys.time()
@@ -12,8 +17,9 @@ run_start <- Sys.time()
 ids <- c("All")
 
 # Source function file
+source("R/Metadata/load_metadata.R")  # Load metadata
 source("R/Phase 1/load_excel_data.R") # Load manual Excel metrics data into SQL
-source("R/pipeline.R")        # Run calculations pipeline
+source("R/pipeline.R")                # Run calculations pipeline
 
 #2. Create database connection -------------------------------------------------
 conn <- DBI::dbConnect(
@@ -173,6 +179,7 @@ output <- run_all(conn = conn,
 run_all_dq_checks(df = output$result$combined_calc_dfs,
                   reference_data = output$staging_data,
                   metadata = output$metadata)
+
 
 
 #6. Standardize output ---------------------------------------------------------
