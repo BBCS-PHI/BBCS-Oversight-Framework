@@ -12,7 +12,7 @@ run_start <- Sys.time()
 ids <- c("All")
 
 # Source function file
-source("R/excel_data_load.R") # Load Excel metrics data into SQL
+source("R/Phase 1/load_excel_data.R") # Load manual Excel metrics data into SQL
 source("R/pipeline.R")        # Run calculations pipeline
 
 #2. Create database connection -------------------------------------------------
@@ -31,6 +31,16 @@ run_all <- function(conn, indicator_ids = "All", schema_name, table_name) {
   #-------------------- Phase 1 ------------------------------------------------
   # Load data into Phase 1 SQL staging table 
   
+  cli::cli_h1("Phase 1")
+  
+  cli::cli_alert_info("Running data extraction")
+  
+  DBI::dbExecute(
+    conn,
+    "EXEC [Cluster_BBCS].[BBCS].[Oversight_Framework_Staging_Data_Insert_All]"
+  )
+  
+  cli::cli_alert_success("Process completed.")
   
   #-------------------- Phase 2 ------------------------------------------------
   # Convert Phase 1 SQL staging table into Phase 2 SQL table 
@@ -164,6 +174,7 @@ run_all_dq_checks(df = output$result$combined_calc_dfs,
                   reference_data = output$staging_data,
                   metadata = output$metadata)
 
+
 #6. Standardize output ---------------------------------------------------------
 result <- output$result$combined_calc_dfs |>
   dplyr::filter(time_period_type %in% c("1 year", "Monthly", "Quarterly")) |> 
@@ -206,15 +217,16 @@ for (col in float_cols) {
 
 cli::cli_h1("Final Data Output SQL Insertion")
 
-insert_data_into_sql_table(
+metricengineR::replace_indicator_data_in_sql(
   conn,
-  database = "Cluster_BBCS",
-  schema   = "BBCS",
-  table    = "Oversight_Framework_Fact_Final_Output_Data",
+  database_name = "Cluster_BBCS",
+  schema_name   = "BBCS",
+  table_name    = "Oversight_Framework_Fact_Final_Output_Data",
   data     = result,
   indicator_ids = ids,
   id_column = "indicator_id"
 )
+
 
 # 8) Output table updates ------------------------------------------------------
 

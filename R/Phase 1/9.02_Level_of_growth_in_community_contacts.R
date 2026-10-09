@@ -28,13 +28,9 @@ csds_result <- metricengineR::get_publication_data(
     "[a-z]+-[0-9]{4}/?$"
   ),
   resource_text = "CSV Data \\(as ZIP\\)",
-  download_folder = "data/CSDS_downloads",
-  dataset_suffix = "/datasets",
-  period_pattern = "[a-z]+-[0-9]{4}/?$",
-  match_period = TRUE,
-  file_pattern = "\\.zip($|\\?)",
-  all_columns_character = TRUE
+  download_folder = "data/CSDS_downloads"
 )
+
 
 #2. Filter and transform dataset -----------------------------------------------
 
@@ -49,37 +45,37 @@ monthly_numerators <- csds_result$data |>
     reference_id = "9.02",
     start_date = as.Date(REPORTING_PERIOD_START),
     end_date = as.Date(REPORTING_PERIOD_END),
-    provider_code = dplyr::if_else(
-      ORG_LEVEL == "Provider",
-      paste0(ORG_CODE, "00"),
-      NA_character_
-    ),
-    provider_site_code = NA_character_,
-    icb = dplyr::case_when(
+    numerator = as.numeric(MEASURE_VALUE),
+    imd_code = 999L,
+    geography_code = dplyr::case_when(
+      ORG_LEVEL == "Provider" ~ paste0(ORG_CODE, "00"),
       ORG_LEVEL == "ICB" & ORG_CODE == "QHL" ~ "E38000258",
       ORG_LEVEL == "ICB" & ORG_CODE == "QUA" ~ "D2P2L",
       TRUE ~ NA_character_
     ),
-    age = NA_integer_,
-    numerator = as.numeric(MEASURE_VALUE),
-    ethnicity_code = NA_integer_,
-    imd_quintile = NA_integer_,
-    geography_level = ORG_LEVEL,
-    geography_code = dplyr::case_when(
-      ORG_LEVEL == "ICB" ~ icb,
-      ORG_LEVEL == "Provider" ~ provider_code
-    )
+    age_group_code = 999L,
+    sex_code = 999L,
+    ethnicity_code = 999L
   )
+
 
 ##2.2. Build denominator dataset -----------------------------------------------
 
 previous_year_data <- monthly_numerators |>
   dplyr::transmute(
-    geography_level,
     geography_code,
+    
+    # Keep the original date so we can see where the denominator came from
+    denominator_start_date = start_date,
+    denominator_end_date = end_date,
+    
+    # Shift forward one year so it joins to the current year's row
     start_date = start_date %m+% lubridate::years(1),
+    end_date = end_date %m+% lubridate::years(1),
+    
     denominator = numerator
   )
+
 
 ##2.3 Build final dataset ------------------------------------------------------
 
@@ -87,35 +83,35 @@ monthly_dataset <- monthly_numerators |>
   dplyr::left_join(
     previous_year_data,
     by = c(
-      "geography_level",
       "geography_code",
-      "start_date"
+      "start_date",
+      "end_date"
     )
   ) |>
-  dplyr::select(
-    -geography_level,
-    -geography_code
-  ) |> 
-  dplyr::filter(!is.na(denominator)) |> 
-  dplyr::select(reference_id, start_date, end_date, provider_code,
-         provider_site_code, icb, age, numerator, denominator,
-         ethnicity_code, imd_quintile)
+  dplyr::filter(!is.na(denominator))
 
 #3. Create an Excel file -------------------------------------------------------
 
 df <- monthly_dataset |> 
   dplyr::transmute(
-    Reference_ID = as.numeric(reference_id),
-    Start_Date = start_date,
-    End_Date = end_date,
-    Provider_Code = provider_code,
-    Provider_Site_Code = provider_site_code,
-    ICB = icb,
-    Age = age,
-    Numerator = numerator,
-    Denominator = denominator,
-    Ethnicity_Code = ethnicity_code,
-    IMD_Quintile = imd_quintile
+    reference_id,
+    indicator_id = NA_integer_,
+    start_date,
+    end_date,
+    numerator,
+    denominator,
+    indicator_value = NA_real_,
+    lower_ci95 = NA_real_,
+    upper_ci95 = NA_real_,
+    imd_code = 999L,
+    geography_code,
+    aggregation_id = NA_integer_,
+    age_group_code = 999L,
+    sex_code = 999L,
+    ethnicity_code = 999L,
+    creation_date = as.Date(NA),
+    value_type_code = NA_integer_,
+    source_code = NA_integer_
   )
 
 output_file <- paste0(
