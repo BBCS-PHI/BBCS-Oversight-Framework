@@ -39,7 +39,8 @@ ref_table <- tibble::tribble(
 
 fingertips_data <- metricengineR::get_fingertips_indicators(
   ref_table$fingertips_id
-)
+) |> 
+  janitor::clean_names()
 
 #3. Get metadata to populate key columns ---------------------------------------
 
