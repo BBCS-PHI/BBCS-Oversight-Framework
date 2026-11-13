@@ -31,7 +31,10 @@ ref_table <- tibble::tribble(
   94063,          8.05,
   30311,          8.06,
   40501,          8.01,
-  40401,          8.02
+  40401,          8.02,
+  92196,          22.2,
+  20601,          22.51,
+  20602,          22.52
 )
 
 
@@ -39,7 +42,8 @@ ref_table <- tibble::tribble(
 
 fingertips_data <- metricengineR::get_fingertips_indicators(
   ref_table$fingertips_id
-)
+) |> 
+  janitor::clean_names()
 
 #3. Get metadata to populate key columns ---------------------------------------
 
@@ -49,8 +53,14 @@ SELECT e.indicator_id
 , a.reference_id
 , b.age_code
 , c.sex_code
-, 999 as imd_code
-, 999 as ethnicity_code
+, CASE WHEN 
+  a.imd = 'All (Persons)' THEN 999
+  ELSE NULL 
+  END as imd_code
+, CASE WHEN 
+  a.ethnicity_categories = 'All (Persons)' THEN 999
+  ELSE NULL 
+  END as ethnicity_code
 , a.precalculated
 , d.value_type_code
 , a.source_code
@@ -80,23 +90,23 @@ metadata <- metadata %>%
 
 final_df <- fingertips_data |> 
   dplyr::filter(
-    Area.Type == "ICBs",
-    Area.Name %in% c(
+    area_type == "ICBs",
+    area_name %in% c(
       "NHS Birmingham and Solihull Integrated Care Board - QHL",
       "NHS Black Country Integrated Care Board - QUA"
     )
   ) |> 
   dplyr::left_join(
     metadata,
-    by = c("Indicator.ID" = "fingertips_id")
+    by = c("indicator_id" = "fingertips_id")
   ) |> 
   dplyr::group_by(
-    indicator_id,
+    indicator_id.y,
     reference_id,
     precalculated,
-    Area.Name,
-    Time.period,
-    Time.period.range,
+    area_name,
+    time_period,
+    time_period_range,
     age_code,
     sex_code,
     imd_code,
@@ -106,40 +116,40 @@ final_df <- fingertips_data |>
   ) |> 
   dplyr::summarise(
     numerator = dplyr::if_else(
-      all(is.na(Count)), 
+      all(is.na(count)), 
       NA_real_, 
-      sum(Count, na.rm = TRUE) # To prevent NULL numerators from being assigned as zeros
+      sum(count, na.rm = TRUE) # To prevent NULL numerators from being assigned as zeros
       ), 
     
     denominator = dplyr::if_else(
-      all(is.na(Denominator)),
+      all(is.na(denominator)),
       NA_real_,
-      sum(Denominator, na.rm = TRUE)
+      sum(denominator, na.rm = TRUE)
     ),
     
     indicator_value = dplyr::case_when(
-      first(precalculated) == "Yes" ~ first(Value),
+      first(precalculated) == "Yes" ~ first(value),
       
       first(precalculated) == "No" &
-        all(is.na(Count)) ~ first(Value), # Numerator is unavailable but Value is available, so use it as the fallback 
+        all(is.na(count)) ~ first(value), # Numerator is unavailable but Value is available, so use it as the fallback 
       
       TRUE ~ NA_real_
     ),
     
     lower_ci95 = dplyr::case_when(
-      first(precalculated) == "Yes" ~ first(Lower.CI.95.0.limit),
+      first(precalculated) == "Yes" ~ first(lower_ci_95_0_limit),
       
       first(precalculated) == "No" &
-        all(is.na(Count)) ~ first(Lower.CI.95.0.limit),
+        all(is.na(count)) ~ first(lower_ci_95_0_limit),
       
       TRUE ~ NA_real_
     ),
     
     upper_ci95 = dplyr::case_when(
-      first(precalculated) == "Yes" ~ first(Upper.CI.95.0.limit),
+      first(precalculated) == "Yes" ~ first(upper_ci_95_0_limit),
       
       first(precalculated) == "No" &
-        all(is.na(Count)) ~ first(Upper.CI.95.0.limit),
+        all(is.na(count)) ~ first(upper_ci_95_0_limit),
       
       TRUE ~ NA_real_
     ),
@@ -154,7 +164,7 @@ final_df <- fingertips_data |>
     # 2021 - 23 -> 2021
     
     start_year = as.integer(
-      stringr::str_extract(.data$Time.period, "^\\d{4}")
+      stringr::str_extract(.data$time_period, "^\\d{4}")
     ),
     
     # Number of years:
@@ -163,13 +173,13 @@ final_df <- fingertips_data |>
     # 5y -> 5
     
     period_years = as.integer(
-      readr::parse_number(.data$Time.period.range)
+      readr::parse_number(.data$time_period_range)
     ),
     
     # Identify whether Fingertips period is financial
     
     is_financial_year = stringr:: str_detect(
-      .data$Time.period,
+      .data$time_period,
       "/"
     ),
     
@@ -221,12 +231,12 @@ final_df <- fingertips_data |>
     
     aggregation_id = dplyr::case_when(
       stringr::str_detect(
-        .data$Area.Name,
+        .data$area_name,
         "Birmingham and Solihull"
       ) ~ "151",
       
       stringr::str_detect(
-        .data$Area.Name,
+        .data$area_name,
         "Black Country"
       ) ~ "163",
       
@@ -236,8 +246,8 @@ final_df <- fingertips_data |>
     creation_date = Sys.Date()
     
     ) |> 
-  dplyr::select(
-    indicator_id,
+  dplyr::transmute(
+    indicator_id = indicator_id.y,
     start_date,
     end_date,
     numerator,
@@ -255,7 +265,6 @@ final_df <- fingertips_data |>
     source_code
   ) %>%
   dplyr::mutate(
-    indicator_id     = as.integer(.data$indicator_id),
     numerator        = as.numeric(.data$numerator),
     denominator      = as.numeric(.data$denominator),
     indicator_value  = as.numeric(.data$indicator_value),
