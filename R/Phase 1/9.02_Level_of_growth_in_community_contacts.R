@@ -16,9 +16,27 @@ library(writexl)
 # To create an Excel file to be loaded into [Cluster_BBCS].[BBCS].[Oversight_Framework_Fact_SQL_Staging_Data]
 #########################################################################################################################################################################
 
+download_folder <- "data/CSDS_downloads"
+
+# Remove previous downloads/extracted files
+if(dir.exists(download_folder)){
+  
+  unlink(
+    download_folder,
+    recursive = TRUE,
+    force = TRUE
+  )
+}
+
+# Recreate empty folder
+dir.create(
+  download_folder,
+  recursive = TRUE
+)
+
 #1. Download CSDS data ----------------------------------------------------------
 
-csds_result <- metricengineR::get_publication_data(
+csds_result <- get_publication_data(
   parent_url = paste0(
     "https://digital.nhs.uk/data-and-information/publications/",
     "statistical/community-services-statistics-for-children-young-people-and-adults"
@@ -28,7 +46,12 @@ csds_result <- metricengineR::get_publication_data(
     "[a-z]+-[0-9]{4}/?$"
   ),
   resource_text = "CSV Data \\(as ZIP\\)",
-  download_folder = "data/CSDS_downloads"
+  download_folder = "data/CSDS_downloads",
+  dataset_pattern = "/datasets[^/]*/?$",
+  period_pattern = "[a-z]+-[0-9]{4}/?$",
+  match_period = TRUE,
+  file_pattern = "\\.(zip|csv)($|\\?)",
+  all_columns_character = TRUE
 )
 
 
@@ -71,7 +94,6 @@ previous_year_data <- monthly_numerators |>
     
     # Shift forward one year so it joins to the current year's row
     start_date = start_date %m+% lubridate::years(1),
-    end_date = end_date %m+% lubridate::years(1),
     
     denominator = numerator
   )
@@ -84,8 +106,7 @@ monthly_dataset <- monthly_numerators |>
     previous_year_data,
     by = c(
       "geography_code",
-      "start_date",
-      "end_date"
+      "start_date"
     )
   ) |>
   dplyr::filter(!is.na(denominator))

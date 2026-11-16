@@ -151,66 +151,82 @@ df <- all_data |>
 
 cli::cli_h1("Running DQ checks")
 
+required_cols <- c(
+  "indicator_id",
+  "start_date",
+  "end_date",
+  "imd_code",
+  "aggregation_id",
+  "age_group_code",
+  "sex_code",
+  "ethnicity_code",
+  "creation_date",
+  "value_type_code",
+  "source_code"
+)
 
-# Check for any missing value across the following columns
+# Identify required columns containing missing values
 dq_missing_summary <- df |>
   dplyr::summarise(
     dplyr::across(
-      c(
-        indicator_id,
-        start_date,
-        end_date,
-        imd_code,
-        aggregation_id,
-        age_group_code,
-        sex_code,
-        ethnicity_code,
-        creation_date,
-        value_type_code,
-        source_code
-      ),
-      ~ any(is.na(.))
+      dplyr::all_of(required_cols),
+      ~ sum(is.na(.))
     )
+  ) |>
+  tidyr::pivot_longer(
+    cols = dplyr::everything(),
+    names_to = "column",
+    values_to = "missing_count"
+  ) |>
+  dplyr::filter(
+    .data$missing_count > 0
   )
 
-print(
-  dq_missing_summary
-)
 
 # Identify rows containing missing required values
 dq_missing_rows <- df |>
-  dplyr::filter(
-    dplyr::if_any(
-      c(
-        indicator_id,
-        start_date,
-        end_date,
-        imd_code,
-        aggregation_id,
-        age_group_code,
-        sex_code,
-        ethnicity_code,
-        creation_date,
-        value_type_code,
-        source_code
+  dplyr::mutate(
+    missing_columns = apply(
+      dplyr::pick(
+        dplyr::all_of(required_cols)
       ),
-      is.na
+      1,
+      function(x){
+        paste(
+          names(x)[is.na(x)],
+          collapse = ", "
+        )
+      }
     )
+  ) |>
+  dplyr::filter(
+    .data$missing_columns != ""
   )
 
-if(nrow(dq_missing_rows) == 0L){
+# Report DQ result
+if(nrow(dq_missing_summary) == 0L){
   
   cli::cli_alert_success(
-    "No missing values found in required columns"
+    "No missing values found in required columns."
   )
-} else{
   
-  cli::cli_alert_warning(
-    "Found {nrow(dq_missing_rows)} row(s) with missing values in required columns."
+} else {
+  
+  missing_columns <- paste(
+    dq_missing_summary$column,
+    collapse = ", "
   )
   
   print(
     dq_missing_rows
+  )
+  
+  print(
+    dq_missing_rows
+  )
+  
+  cli::cli_abort(
+    "DQ failed. Missing values found in required column(s): {missing_columns}. Data will not be loaded into SQL."
   )
 }
 

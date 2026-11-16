@@ -34,20 +34,37 @@ conn <- DBI::dbConnect(
 
 run_all <- function(conn, indicator_ids = "All", schema_name, table_name) {
   
-  #-------------------- Phase 1 ------------------------------------------------
-  # Load data into Phase 1 SQL staging table 
+  #-------------------- Phase 0 ------------------------------------------------
+  # Add new indicator IDs to the indicator list table and update the indicator ID
+  # in the metadata
   
-  cli::cli_h1("Phase 1")
+  cli::cli_h1("Phase 0")
   
-  cli::cli_alert_info("Running data extraction")
+  cli::cli_alert_info("Updating indicator list table")
   
   DBI::dbExecute(
     conn,
-    "EXEC [Cluster_BBCS].[BBCS].[Oversight_Framework_Staging_Data_Insert_All]"
+    "EXEC [BBCS].[Oversight_Framework_Phase_0_Update_Indicator_List]"
   )
+  
   
   cli::cli_alert_success("Process completed.")
   
+  #-------------------- Phase 1 ------------------------------------------------
+  # Load data into Phase 1 SQL staging table
+
+  cli::cli_h1("Phase 1")
+
+  cli::cli_alert_info("Running data extraction")
+
+  DBI::dbExecute(
+    conn,
+    "EXEC [Cluster_BBCS].[BBCS].[Oversight_Framework_Phase_1_Staging_Data_Insert_All]"
+  )
+
+
+  cli::cli_alert_success("Process completed.")
+
   #-------------------- Phase 2 ------------------------------------------------
   # Convert Phase 1 SQL staging table into Phase 2 SQL table 
   
@@ -179,7 +196,6 @@ output <- run_all(conn = conn,
 run_all_dq_checks(df = output$result$combined_calc_dfs,
                   reference_data = output$staging_data,
                   metadata = output$metadata)
-
 
 
 #6. Standardize output ---------------------------------------------------------

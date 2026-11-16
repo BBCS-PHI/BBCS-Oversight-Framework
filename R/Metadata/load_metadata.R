@@ -25,7 +25,10 @@ indicator_data <- read_xlsx(
   sheet = "Metadata"
   ) |> 
   mutate(
-    reference_id = as.character(reference_id)
+    reference_id = 
+      round(
+      as.numeric(reference_id), 2
+      )
     )
 
 
